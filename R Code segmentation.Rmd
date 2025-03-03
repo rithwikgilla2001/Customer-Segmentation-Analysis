@@ -1,0 +1,229 @@
+---
+title: "Project - Customer Segmenation"
+group_num: "8"
+output: pdf_document
+date: "2024-11-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(tidyverse)
+library(cluster)
+library(factoextra)
+library(dbscan)
+library(purrr)
+library(gdata)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+train_data <- read_csv("Train.csv")
+head(train_data)
+
+test_data <- read_csv("Test.csv")
+head(test_data)
+```
+```{r}
+print(paste("Train Data has",dim(train_data)[1], "rows and", dim(train_data)[2], "columns"))
+print(paste("Test Data has",dim(test_data)[1], "rows and", dim(test_data)[2], "columns"))
+```
+
+```{r}
+str(train_data)
+```
+
+```{r}
+summary(train_data)
+```
+```{r}
+segmentation_counts <- table(train_data$Segmentation)
+segmentation_counts
+```
+
+```{r}
+ggplot(train_data, aes(x = Gender)) +
+  geom_bar(fill = "skyblue") +
+  labs(title = "Gender Distribution", x = "Gender", y = "Count")
+```
+
+```{r}
+ggplot(train_data, aes(x = Age)) +
+  geom_histogram(binwidth = 5, fill = "lightgreen", color = "black") +
+  labs(title = "Age Distribution", x = "Age", y = "Count")
+```
+
+```{r}
+ggplot(train_data, aes(x = Spending_Score)) +
+  geom_bar(fill = "coral") +
+  labs(title = "Spending Score Distribution", x = "Spending Score", y = "Count")
+```
+
+```{r}
+na_counts_train <- colSums(is.na(train_data))
+print("NA counts in Train Data:")
+print(na_counts_train)
+```
+```{r}
+preprocess_data <- function(data) {
+  data_no_id <- data %>% select(-ID)
+  
+  processed_data <- data.frame(data_no_id)
+  
+  processed_data$Gender_numeric <- ifelse(data$Gender == "Male", 1, 0)
+  
+  processed_data$Ever_Married <- ifelse(is.na(processed_data$Ever_Married), "Divorced", processed_data$Ever_Married)
+  processed_data$Ever_Married_numeric <- ifelse(processed_data$Ever_Married == "Yes", 1, 
+                                                ifelse(processed_data$Ever_Married == "No", 0, -1))
+  
+  processed_data <- processed_data[!is.na(processed_data$Graduated), ]
+  processed_data$Graduated_numeric <- ifelse(processed_data$Graduated == "Yes", 1, 0)
+  
+  processed_data$Profession <- ifelse(is.na(processed_data$Profession), "No Job", processed_data$Profession)
+  processed_data$Profession_numeric <- as.numeric(factor(processed_data$Profession, 
+                                                         levels = c("Healthcare", "Engineer", "Lawyer", 
+                                                                    "Entertainment", "Artist", "Executive", 
+                                                                    "Doctor", "Homemaker", "Marketing", "No Job")))
+  
+  processed_data$Work_Experience <- ifelse(processed_data$Profession == "No Job", 0, processed_data$Work_Experience)
+  processed_data <- processed_data[!is.na(processed_data$Work_Experience), ]
+  
+  processed_data$Spending_Score_numeric <- ifelse(processed_data$Spending_Score == "High", 1, 
+                                                  ifelse(processed_data$Spending_Score == "Low", 0, -1))
+  
+  processed_data$Family_Size[is.na(processed_data$Family_Size)] <- 1
+  processed_data <- processed_data[!is.na(processed_data$Var_1), ]
+  var_1_mapping <- c("Cat_1" = 1, "Cat_2" = 2, "Cat_3" = 3, "Cat_4" = 4, 
+                     "Cat_5" = 5, "Cat_6" = 6, "Cat_7" = 7)
+  processed_data$Var_1_numeric <- as.numeric(var_1_mapping[processed_data$Var_1])
+  
+  selected_columns <- c("Gender_numeric", "Ever_Married_numeric", "Age", "Graduated_numeric", "Profession_numeric", 
+                        "Work_Experience", "Spending_Score_numeric", "Family_Size", "Var_1_numeric")
+  selected_data <- processed_data[, selected_columns]
+  scaled_data <- as.data.frame(scale(selected_data))
+  return(scaled_data)
+}
+
+scaled_train_data <- preprocess_data(train_data)
+scaled_test_data <- preprocess_data(test_data)
+
+head(scaled_train_data)
+head(scaled_test_data)
+```
+```{r}
+pca <- prcomp(scaled_train_data, scale. = TRUE)
+fviz_eig(pca)
+
+train_pca <- predict(pca, scaled_train_data)
+dim(train_pca)
+
+test_pca <- predict(pca, scaled_test_data)
+dim(test_pca)
+```
+
+```{r}
+set.seed(123) 
+kmeans_clusters <- kmeans(scaled_train_data, centers = 4, nstart = 25)
+# print(kmeans_clusters)
+
+fviz_cluster(kmeans_clusters, data = scaled_train_data)
+```
+```{r}
+dist_matrix <- dist(scaled_train_data, method = "euclidean")
+hclust_model <- hclust(dist_matrix, method = "ward.D2")
+
+plot(hclust_model, labels = FALSE, main = "Hierarchical Clustering Dendrogram")
+rect.hclust(hclust_model, k = 4, border = "red")
+
+hclust_clusters <- cutree(hclust_model, k = 4)
+```
+```{r}
+dbscan_model <- dbscan(scaled_train_data, eps = 0.5, minPts = 5)
+# print(dbscan_model)
+
+fviz_cluster(dbscan_model, data = scaled_train_data, geom = "point")
+```
+```{r}
+silhouette_kmeans <- silhouette(kmeans_clusters$cluster, dist(scaled_train_data))
+fviz_silhouette(silhouette_kmeans)
+
+silhouette_hierarchical <- silhouette(hclust_clusters, dist(scaled_train_data))
+fviz_silhouette(silhouette_hierarchical)
+
+if (any(dbscan_model$cluster != 0)) {
+  silhouette_dbscan <- silhouette(dbscan_model$cluster, dist(scaled_train_data))
+  fviz_silhouette(silhouette_dbscan)
+} else {
+  print("DBSCAN has too many noise points for silhouette analysis.")
+}
+```
+```{r}
+table(KMeans = kmeans_clusters$cluster, Hierarchical = hclust_clusters)
+table(DBSCAN = dbscan_model$cluster, KMeans = kmeans_clusters$cluster)
+```
+
+
+```{r}
+test_kmeans_model <- kmeans(test_pca, centers = kmeans_clusters$centers, nstart = 25)
+test_kmeans_clusters <- test_kmeans_model$cluster
+
+test_dist_matrix <- dist(test_pca, method = "euclidean")
+test_hclust_clusters <- cutree(hclust_model, k = 4)
+
+test_dbscan_model <- dbscan(test_pca, eps = 0.5, minPts = 5)
+test_dbscan_clusters <- test_dbscan_model$cluster
+```
+
+
+```{r}
+align_clusters <- function(test_clusters, total_rows) {
+  cluster_length <- length(test_clusters)
+  if (cluster_length < total_rows) {
+    # Pad with NA if fewer rows
+    aligned_clusters <- c(test_clusters, rep(NA, total_rows - cluster_length))
+  } else if (cluster_length > total_rows) {
+    # Truncate excess rows
+    aligned_clusters <- test_clusters[1:total_rows]
+  } else {
+    # Return as is if lengths match
+    aligned_clusters <- test_clusters
+  }
+  return(aligned_clusters)
+}
+
+total_test_rows <- nrow(test_data)
+
+aligned_kmeans_clusters <- align_clusters(test_kmeans_clusters, total_test_rows)
+aligned_hclust_clusters <- align_clusters(test_hclust_clusters, total_test_rows)
+aligned_dbscan_clusters <- align_clusters(test_dbscan_clusters, total_test_rows)
+
+test_results <- data.frame(
+  ID = test_data$ID,
+  KMeans_Cluster = aligned_kmeans_clusters,
+  Hierarchical_Cluster = aligned_hclust_clusters,
+  DBSCAN_Cluster = aligned_dbscan_clusters
+)
+
+write.csv(test_results, "Test_Cluster_Results.csv", row.names = FALSE)
+
+print(head(test_results))
+print(dim(test_results))
+```
+
+```{r}
+# Append K-means clusters to train_data
+scaled_train_data$kmeans_cluster <- kmeans_clusters$cluster
+
+# Calculate average spending score for each K-means cluster
+avg_spending_kmeans <- scaled_train_data %>%
+  group_by(kmeans_cluster) %>%
+  summarise(avg_spending_score = mean(Spending_Score_numeric, na.rm = TRUE))
+
+# Display the results
+print(avg_spending_kmeans)
+```
